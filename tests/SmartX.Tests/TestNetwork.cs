@@ -1,5 +1,6 @@
 using SmartX.Api.RealTime;
 using SmartX.Api.Services;
+using SmartX.Api.Topology;
 using SmartX.Shared.Dto;
 using SmartX.Shared.Enums;
 
@@ -38,7 +39,9 @@ public sealed class TestNetwork
         Errors = new ActiveErrorTracker();
         Classifier = new TelemetryClassifier(Options);
         Broadcaster = new LiveUpdateBroadcaster();
-        Processor = new TelemetryProcessor(Registry, History, Errors, Classifier, Broadcaster, new TelemetryStore(), Options, Clock);
+        Readings = new ReadingHistory(Options);
+        Topology = new MeshTopology(Registry);
+        Processor = new TelemetryProcessor(Registry, History, Errors, Classifier, Broadcaster, new TelemetryStore(), Readings, Options, Clock);
         Commands = new CommandService(Registry, Errors, History, Broadcaster, Clock);
         Searches = new SearchHistory(Clock);
         Engine = new RecommendationEngine(Registry, History, Errors, Commands, Searches, Classifier, Options, Clock);
@@ -55,6 +58,8 @@ public sealed class TestNetwork
     public CommandService Commands { get; }
     public SearchHistory Searches { get; }
     public RecommendationEngine Engine { get; }
+    public ReadingHistory Readings { get; }
+    public MeshTopology Topology { get; }
 
     /// <summary>Moisture sensor + pump in Zone 1, a smart plug and power meter in Zone 3.</summary>
     public TestNetwork WithDemoDevices()
