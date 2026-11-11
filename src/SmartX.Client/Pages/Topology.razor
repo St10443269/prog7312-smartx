@@ -1,66 +1,729 @@
 @page "/topology"
 @implements IDisposable
-@inject LiveDashboardState Live
+@inject SmartXApiClient Api
 
 <PageTitle>Network Topology</PageTitle>
 
-<div class="page-kicker">// FINAL POE MODULE</div>
+<div class="page-kicker">// PART 3 &middot; MESH NETWORK</div>
 <h1>Network Topology &amp; Mesh Routing</h1>
+<p class="page-lead">
+    The sensors form a mesh: a sensor that is too far from the gateway sends its data through other sensors.
+    Click a sensor to see how it reaches the gateway. Click a line to switch that connection off and watch the routes change.
+</p>
 
-<div class="sx-card not-built">
-    <span class="sx-pill sx-pill-muted">Not yet implemented</span>
-    <p>
-        Mesh routing (node-to-node links, route discovery and path visualisation) is part of the
-        <strong>final PoE</strong> and has <strong>not</strong> been built yet. This page is a placeholder
-        so the navigation already has a home for it.
-    </p>
-    <p class="muted small">
-        What already exists that the final module will build on: the device registry (devices keyed by MAC,
-        grouped by zone below), live device status over Server-Sent Events, and the Part 1 deployment tree
-        (Facility &rarr; Zone &rarr; Sub-Zone &rarr; Device).
-    </p>
-</div>
+<ApiErrorBanner Message="@_error" OnRetry="LoadAsync" />
 
-<h2 class="zones-heading">Current devices by zone <span class="muted small">(live, simulated)</span></h2>
-@if (Live.Devices.Count == 0)
+@if (_topology is null)
 {
-    <p class="sx-empty">Waiting for the live device list from the API...</p>
+    <p class="sx-empty">@(_error is null ? "Loading the network..." : "The network could not be loaded.")</p>
 }
 else
 {
-    <div class="zones">
-        @foreach (var zone in Live.Devices.GroupBy(d => d.ZoneName))
-        {
-            <div class="sx-card zone">
-                <h3>@zone.Key</h3>
-                <ul>
-                    @foreach (var device in zone)
-                    {
-                        <li>
-                            <span class="sx-dot sx-dot-@device.Status.ToString().ToLowerInvariant()"></span>
-                            @device.Name <span class="muted small mono">@device.MacAddress</span>
-                        </li>
-                    }
-                </ul>
-            </div>
-        }
+    <div class="sx-feedback sx-feedback-rejected sim-note">
+        Simulated network: the positions and link costs are made up so the page can be demonstrated without real ESP32 radios.
+        Two devices are linked when they are within @_topology.RadioRangeMetres.ToString("0") m of each other.
     </div>
+
+    <div class="status-row">
+        <span class="sx-pill sx-pill-active">@_topology.OnlineCount online</span>
+        <span class="sx-pill sx-pill-disconnected">@_topology.OfflineCount offline</span>
+        <span class="sx-pill sx-pill-fault" title="Online, but every route to the gateway is broken">@_topology.CutOffCount cut off</span>
+        <span class="muted small">@_topology.Links.Count links &middot; @_topology.Links.Count(l => l.IsUsable) working</span>
+    </div>
+
+    <div class="sx-toolbar">
+        <button class="@(_showTree ? "sx-btn-primary" : "sx-btn")" @onclick="ToggleTree">
+            @(_showTree ? "Hide spanning tree" : "Show spanning tree")
+        </button>
+        <button class="sx-btn" @onclick="() => RunBfsAsync(null)" disabled="@_busy">Run search from gateway</button>
+        <button class="sx-btn" @onclick="ClearSelection" disabled="@(_selectedId is null && _selectedLink is null && _bfs is null)">Clear selection</button>
+    </div>
+
+    <div class="topology">
+        <section class="sx-card diagram-card">
+            <svg viewBox="0 0 1000 700" class="mesh" role="img" aria-label="Diagram of the sensor mesh network">
+                @foreach (var link in _topology.Links)
+                {
+                    var from = NodeById(link.A);
+                    var to = NodeById(link.B);
+                    if (from is null || to is null)
+                    {
+                        continue;
+                    }
+
+                    <g @key="LinkKey(link.A, link.B)">
+                        <line x1="@Px(from.X)" y1="@Px(from.Y)" x2="@Px(to.X)" y2="@Px(to.Y)" class="@LinkClass(link)" />
+                        <line x1="@Px(from.X)" y1="@Px(from.Y)" x2="@Px(to.X)" y2="@Px(to.Y)" class="link-hit"
+                              @onclick="() => SelectLink(link)"><title>@from.Name &harr; @to.Name (cost @link.Cost.ToString("0.0"))</title></line>
+                        @if (ShowCost(link))
+                        {
+                            <g><text x="@Px((from.X + to.X) / 2)" y="@Px((from.Y + to.Y) / 2 - 1)" class="cost-label">@link.Cost.ToString("0.0")</text></g>
+                        }
+                    </g>
+                }
+
+                @foreach (var node in _topology.Nodes)
+                {
+                    <g @key="node.Id" class="@NodeClass(node)" @onclick="() => SelectNodeAsync(node.Id)">
+                        @if (node.IsGateway)
+                        {
+                            <rect x="@Px(node.X - 2.6)" y="@Px(node.Y - 2.6)" width="52" height="52" rx="10" class="node-shape" />
+                        }
+                        else
+                        {
+                            <circle cx="@Px(node.X)" cy="@Px(node.Y)" r="26" class="node-shape" />
+                        }
+                        <text x="@Px(node.X)" y="@PxPlus(node.Y, 7)" class="node-icon">@(node.IsGateway ? "GW" : ShortCode(node.Name))</text>
+                        <text x="@Px(node.X)" y="@PxPlus(node.Y, 52)" class="node-name">@node.Name</text>
+                        @if (_bfsOrder.TryGetValue(node.Id, out var order))
+                        {
+                            <g>
+                                <circle cx="@Px(node.X + 2.6)" cy="@Px(node.Y - 2.6)" r="13" class="bfs-badge" />
+                                <text x="@Px(node.X + 2.6)" y="@Px(node.Y - 2.6 + 0.5)" class="bfs-number">@order</text>
+                            </g>
+                        }
+                    </g>
+                }
+            </svg>
+
+            <div class="legend small muted">
+                <span><i class="dot dot-online"></i> online</span>
+                <span><i class="dot dot-offline"></i> offline</span>
+                <span><i class="dot dot-cutoff"></i> cut off</span>
+                <span><i class="dot dot-gateway"></i> gateway</span>
+                <span><i class="line-sample line-tree"></i> spanning tree</span>
+                <span><i class="line-sample line-route"></i> chosen route</span>
+                <span><i class="line-sample line-down"></i> switched off</span>
+            </div>
+        </section>
+
+        <aside class="sx-stack">
+            <section class="sx-card">
+                <h2>Selected</h2>
+                @if (_selectedLink is { } selected && SelectedLinkDto is { } linkDto)
+                {
+                    <p><strong>@NameOf(linkDto.A) &harr; @NameOf(linkDto.B)</strong></p>
+                    <p class="small muted">
+                        Cost @linkDto.Cost.ToString("0.00") (simulated energy estimate) &middot;
+                        @(linkDto.IsUp ? (linkDto.IsUsable ? "working" : "on, but one end is offline") : "switched off")
+                        @if (_showTree && InTree(linkDto))
+                        {
+                            <span> &middot; part of the spanning tree</span>
+                        }
+                    </p>
+                    <button class="sx-btn" @onclick="() => SetLinkAsync(linkDto)" disabled="@_busy">
+                        @(linkDto.IsUp ? "Switch this link off" : "Switch this link on")
+                    </button>
+                }
+                else if (SelectedNode is { } node)
+                {
+                    <p>
+                        <strong>@node.Name</strong>
+                        <span class="sx-pill @StatusPill(node)">@StatusText(node)</span>
+                    </p>
+                    <p class="small muted mono">@(node.IsGateway ? "Central gateway" : node.Id)</p>
+
+                    @if (!node.IsGateway)
+                    {
+                        <p class="small">@(_route?.Message ?? "Working out the route...")</p>
+                    }
+
+                    <h3 class="sub">Connected to</h3>
+                    @if (NeighbourLinks(node.Id).Count == 0)
+                    {
+                        <p class="small muted">No links in range.</p>
+                    }
+                    else
+                    {
+                        <ul class="neighbours small">
+                            @foreach (var (other, link) in NeighbourLinks(node.Id))
+                            {
+                                <li>
+                                    <button class="linklike" @onclick="() => SelectLink(link)">@other.Name</button>
+                                    <span class="muted">cost @link.Cost.ToString("0.0") &middot; @LinkState(link)</span>
+                                </li>
+                            }
+                        </ul>
+                    }
+
+                    @if (!node.IsGateway && _route is not null)
+                    {
+                        <h3 class="sub">Route to the gateway</h3>
+                        <div class="route @(!_routeViaTree ? "route-chosen" : "")">
+                            <div class="small"><strong>Fewest hops</strong> @(_route.FewestHopsPath.Count > 1 ? $"({_route.FewestHopsPath.Count - 1} hops, cost {_route.FewestHopsCost:0.0})" : "")</div>
+                            <div class="path">@PathText(_route.FewestHopsPath)</div>
+                            <button class="sx-btn sx-btn-small" @onclick="() => ChooseRoute(false)" disabled="@(_route.FewestHopsPath.Count == 0)">Show on diagram</button>
+                        </div>
+                        <div class="route @(_routeViaTree ? "route-chosen" : "")">
+                            <div class="small"><strong>Through the spanning tree</strong> @(_route.TreePath.Count > 1 ? $"({_route.TreePath.Count - 1} hops, cost {_route.TreePathCost:0.0})" : "")</div>
+                            <div class="path">@PathText(_route.TreePath)</div>
+                            <button class="sx-btn sx-btn-small" @onclick="() => ChooseRoute(true)" disabled="@(_route.TreePath.Count == 0)">Show on diagram</button>
+                        </div>
+                        @if (RoutesDiffer)
+                        {
+                            <p class="small muted">
+                                The two routes are different. The spanning tree keeps the total cost of the whole network as low as possible,
+                                so one sensor's own route through it can be longer than its direct route.
+                            </p>
+                        }
+                    }
+
+                    @if (node.IsOnline)
+                    {
+                        <div class="actions">
+                            <button class="sx-btn sx-btn-small" @onclick="() => RunBfsAsync(node.Id)" disabled="@_busy">Run search from here</button>
+                            @if (!node.IsGateway)
+                            {
+                                <button class="sx-btn sx-btn-small" @onclick="() => SimulateOutageAsync(node.Id)" disabled="@_busy"
+                                        title="Simulator only: the device stops sending data for 20 seconds">
+                                    Simulate 20 s outage
+                                </button>
+                            }
+                        </div>
+                    }
+
+                    @if (_outageNote is not null)
+                    {
+                        <p class="small muted">@_outageNote</p>
+                    }
+                }
+                else
+                {
+                    <p class="muted small">Click a sensor or a line on the diagram to see its details.</p>
+                }
+            </section>
+
+            <section class="sx-card">
+                <h2>Spanning tree</h2>
+                @if (_mst is null)
+                {
+                    <p class="muted small">Loading...</p>
+                }
+                else
+                {
+                    <table class="sx-table compare">
+                        <thead><tr><th></th><th>Links</th><th>Total cost</th></tr></thead>
+                        <tbody>
+                            <tr><td>Normal network</td><td class="mono">@_mst.AllLinksCount</td><td class="mono">@_mst.AllLinksCost.ToString("0.0")</td></tr>
+                            <tr><td>Spanning tree</td><td class="mono">@_mst.Links.Count</td><td class="mono">@_mst.TotalCost.ToString("0.0")</td></tr>
+                        </tbody>
+                    </table>
+                    <p class="small">@_mst.Message</p>
+                    <p class="small muted">
+                        The spanning tree (Prim's algorithm) is the cheapest set of links that still connects every device
+                        that can reach the gateway. @(_mst.NotInTree.Count > 0 ? $"Left out: {string.Join(", ", _mst.NotInTree.Select(NameOf))}." : "")
+                    </p>
+                    @if (!_showTree)
+                    {
+                        <button class="sx-btn sx-btn-small" @onclick="ToggleTree">Show it on the diagram</button>
+                    }
+                }
+            </section>
+
+            <section class="sx-card">
+                <h2>Search (BFS)</h2>
+                @if (_bfs is null)
+                {
+                    <p class="muted small">
+                        Breadth-first search visits the start node, then everything one hop away, then two hops, and so on.
+                        Press "Run search from gateway" to see the order. The numbers appear on the diagram.
+                    </p>
+                }
+                else
+                {
+                    <p class="small">@_bfs.Message</p>
+                    <ol class="bfs-list small">
+                        @foreach (var step in _bfs.Steps)
+                        {
+                            <li><strong>@step.Name</strong> <span class="muted">&middot; @(step.Level == 0 ? "start" : $"{step.Level} hop(s) away")</span></li>
+                        }
+                    </ol>
+                    @if (_bfs.UnreachableIds.Count > 0)
+                    {
+                        <p class="small"><strong>Cannot be reached:</strong> @string.Join(", ", _bfs.UnreachableIds.Select(NameOf))</p>
+                    }
+                }
+            </section>
+        </aside>
+    </div>
+
+    <section class="sx-card readings">
+        <div class="sx-card-head">
+            <h2>Historical readings</h2>
+            <span class="sx-pill sx-pill-muted">AVL tree</span>
+        </div>
+
+        @if (SelectedNode is not { IsGateway: false } sensor)
+        {
+            <p class="sx-empty">Click a sensor on the diagram to look at its past readings.</p>
+        }
+        else
+        {
+            <p class="small muted">
+                <strong>@sensor.Name</strong>: choose a time range. The readings are kept in a balanced tree sorted by time,
+                so only the part of the tree inside the range is searched.
+            </p>
+            <form class="sx-toolbar" @onsubmit="LoadReadingsAsync" @onsubmit:preventDefault>
+                <label>From <input class="sx-input" type="datetime-local" @bind="_from" /></label>
+                <label>To <input class="sx-input" type="datetime-local" @bind="_to" /></label>
+                <button type="submit" class="sx-btn-primary" disabled="@_readingsLoading">@(_readingsLoading ? "Searching..." : "Search")</button>
+                <button type="button" class="sx-btn" @onclick="() => QuickRangeAsync(30)">Last 30 sec</button>
+                <button type="button" class="sx-btn" @onclick="() => QuickRangeAsync(5 * 60)">Last 5 min</button>
+                <button type="button" class="sx-btn" @onclick="() => QuickRangeAsync(15 * 60)">Last 15 min</button>
+                <button type="button" class="sx-btn" @onclick="() => QuickRangeAsync(60 * 60)">Last hour</button>
+            </form>
+
+            @if (_readings is null)
+            {
+                <p class="muted small">@(_readingsLoading ? "Searching..." : "No search yet.")</p>
+            }
+            else if (_readings.Readings.Count == 0)
+            {
+                <p class="sx-empty">No readings for @_readings.Name in that time range.</p>
+            }
+            else
+            {
+                <p class="small">
+                    Found <strong>@_readings.Readings.Count</strong> reading(s) between
+                    @_readings.From.ToLocalTime().ToString("HH:mm:ss") and @_readings.To.ToLocalTime().ToString("HH:mm:ss").
+                    The tree looked at <strong>@_readings.NodesVisited</strong> of the <strong>@_readings.TotalStored</strong> stored readings.
+                </p>
+                <div class="sx-table-wrap readings-table">
+                    <table class="sx-table">
+                        <thead><tr><th>Time</th><th>Type</th><th>Value</th></tr></thead>
+                        <tbody>
+                            @foreach (var reading in _readings.Readings.Take(200))
+                            {
+                                <tr>
+                                    <td class="mono">@reading.Timestamp.ToLocalTime().ToString("HH:mm:ss")</td>
+                                    <td>@reading.SensorType</td>
+                                    <td class="mono">@reading.Value.ToString("0.##")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+                @if (_readings.Readings.Count > 200)
+                {
+                    <p class="small muted">Showing the first 200 of @_readings.Readings.Count.</p>
+                }
+            }
+        }
+    </section>
 }
 
 <style>
-    .not-built { border-style: dashed; margin-bottom: 1.5rem; max-width: 80ch; }
-    .not-built p { margin: 0.75rem 0 0; }
-    .zones-heading { font-size: 1.05rem; margin-bottom: 0.75rem; }
-    .zones { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1rem; }
-    .zone h3 { font-size: 0.95rem; margin: 0 0 0.5rem; color: var(--sx-cyan); }
-    .zone ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.4rem; }
-    .zone li { display: flex; align-items: center; gap: 0.5rem; font-size: 0.88rem; flex-wrap: wrap; }
+    .sim-note { margin: 0 0 1rem; font-size: 0.85rem; }
+    .status-row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin-bottom: 0.75rem; }
+
+    .topology { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(300px, 1fr); gap: 1.25rem; align-items: start; }
+    .readings { margin-top: 1.25rem; }
+
+    .mesh { width: 100%; height: auto; display: block; background: rgba(0, 0, 0, 0.2); border-radius: 10px; }
+
+    /* links */
+    .mesh line { stroke-linecap: round; }
+    .link-up { stroke: rgba(0, 229, 255, 0.45); stroke-width: 3; }
+    .link-faint { stroke: rgba(124, 138, 168, 0.25); stroke-width: 2; stroke-dasharray: 2 8; }
+    .link-tree { stroke: var(--sx-green); stroke-width: 7; }
+    .link-blocked { stroke: rgba(124, 138, 168, 0.4); stroke-width: 3; stroke-dasharray: 8 8; }
+    .link-down { stroke: var(--sx-red); stroke-width: 3; stroke-dasharray: 3 9; }
+    .link-route { stroke: var(--sx-amber); stroke-width: 9; }
+    .link-selected { filter: drop-shadow(0 0 6px var(--sx-cyan)); }
+    .link-hit { stroke: transparent; stroke-width: 22; cursor: pointer; }
+    .cost-label { fill: #dcecff; font-size: 17px; text-anchor: middle; paint-order: stroke; stroke: #05070d; stroke-width: 4px; font-family: var(--sx-font-mono); pointer-events: none; }
+
+    /* nodes */
+    .node { cursor: pointer; }
+    .node-shape { stroke-width: 3; fill: #0d1220; }
+    .node-online .node-shape { stroke: var(--sx-green); }
+    .node-offline .node-shape { stroke: var(--sx-red); fill: rgba(255, 59, 96, 0.15); }
+    .node-cutoff .node-shape { stroke: var(--sx-amber); fill: rgba(255, 176, 32, 0.12); }
+    .node-gateway .node-shape { stroke: var(--sx-purple); fill: rgba(180, 91, 255, 0.18); }
+    .node-selected .node-shape { stroke: var(--sx-cyan); stroke-width: 6; filter: drop-shadow(0 0 8px var(--sx-cyan)); }
+    .node:hover .node-shape { stroke-width: 5; }
+    .node-icon { fill: #f2fbff; font-size: 20px; font-weight: 700; text-anchor: middle; pointer-events: none; font-family: var(--sx-font-display); }
+    .node-name { fill: var(--sx-text); font-size: 18px; text-anchor: middle; pointer-events: none; font-family: var(--sx-font-body); }
+    .node-offline .node-name { fill: var(--sx-text-dim); }
+    .bfs-badge { fill: var(--sx-cyan); }
+    .bfs-number { fill: #04121a; font-size: 16px; font-weight: 700; text-anchor: middle; dominant-baseline: central; pointer-events: none; }
+
+    /* legend */
+    .legend { display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 0.75rem; }
+    .legend span { display: inline-flex; align-items: center; gap: 0.35rem; }
+    .dot { width: 11px; height: 11px; border-radius: 50%; border: 3px solid; display: inline-block; }
+    .dot-online { border-color: var(--sx-green); }
+    .dot-offline { border-color: var(--sx-red); }
+    .dot-cutoff { border-color: var(--sx-amber); }
+    .dot-gateway { border-color: var(--sx-purple); border-radius: 3px; }
+    .line-sample { width: 22px; height: 0; border-top: 4px solid; display: inline-block; }
+    .line-tree { border-color: var(--sx-green); }
+    .line-route { border-color: var(--sx-amber); }
+    .line-down { border-color: var(--sx-red); border-top-style: dotted; }
+
+    /* side panels */
+    .sub { font-size: 0.9rem; margin: 1rem 0 0.4rem; color: var(--sx-cyan); }
+    ul.neighbours { list-style: none; margin: 0 0 0.5rem; padding: 0; display: flex; flex-direction: column; gap: 0.25rem; }
+    .linklike { background: none; border: none; padding: 0; color: var(--sx-cyan); cursor: pointer; font: inherit; text-decoration: underline; }
+    .route { border: 1px solid rgba(255, 255, 255, 0.06); border-radius: 8px; padding: 0.55rem 0.65rem; margin-bottom: 0.5rem; display: flex; flex-direction: column; gap: 0.3rem; align-items: flex-start; }
+    .route-chosen { border-color: rgba(255, 176, 32, 0.5); background: rgba(255, 176, 32, 0.05); }
+    .path { font-size: 0.85rem; color: var(--sx-text); }
+    .actions { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.75rem; }
+    table.compare { margin-bottom: 0.5rem; }
+    ol.bfs-list { margin: 0 0 0.5rem; padding-left: 1.3rem; display: flex; flex-direction: column; gap: 0.15rem; max-height: 260px; overflow-y: auto; }
+    .readings-table { max-height: 320px; overflow-y: auto; }
+
+    @@media (max-width: 1000px) {
+        .topology { grid-template-columns: 1fr; }
+    }
 </style>
 
 @code {
-    protected override void OnInitialized() => Live.Changed += OnLiveChanged;
+    // 1 metre on the layout = 10 units in the SVG
+    private const double Scale = 10;
 
-    private void OnLiveChanged() => InvokeAsync(StateHasChanged);
+    private TopologyDto? _topology;
+    private MstDto? _mst;
+    private RouteDto? _route;
+    private BfsDto? _bfs;
+    private ReadingQueryDto? _readings;
 
-    public void Dispose() => Live.Changed -= OnLiveChanged;
+    private string? _selectedId;
+    private (string A, string B)? _selectedLink;
+    private bool _showTree;
+    private bool _routeViaTree;
+    private bool _busy;
+    private bool _readingsLoading;
+    private string? _error;
+    private string? _outageNote;
+
+    private HashSet<string> _treeKeys = [];
+    private HashSet<string> _routeKeys = [];
+    private Dictionary<string, int> _bfsOrder = [];
+
+    private DateTime _from = DateTime.Now.AddMinutes(-15);
+    private DateTime _to = DateTime.Now;
+
+    private CancellationTokenSource? _cts;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+
+        // refresh every few seconds so devices going offline show up by themselves
+        _cts = new CancellationTokenSource();
+        _ = RefreshLoopAsync(_cts.Token);
+    }
+
+    private async Task RefreshLoopAsync(CancellationToken token)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(3));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(token))
+            {
+                await LoadAsync();
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // left the page
+        }
+    }
+
+    /// <summary>Asks the API for the current network, spanning tree and (if a sensor is selected) its route.</summary>
+    private async Task LoadAsync()
+    {
+        try
+        {
+            _topology = await Api.GetTopologyAsync();
+            _mst = await Api.GetSpanningTreeAsync();
+
+            if (_selectedId is not null && SelectedNode is { IsGateway: false })
+            {
+                _route = await Api.GetRouteAsync(_selectedId);
+            }
+            else
+            {
+                _route = null;
+            }
+
+            UpdateHighlights();
+            _error = null;
+        }
+        catch (Exception ex)
+        {
+            _error = SmartXApiClient.DescribeError(ex);
+        }
+    }
+
+    // ---------------------------------------------------------------- selecting
+
+    private async Task SelectNodeAsync(string id)
+    {
+        _selectedId = id;
+        _selectedLink = null;
+        _readings = null;
+        _outageNote = null;
+        _routeViaTree = false;
+        await LoadAsync();
+
+        if (SelectedNode is { IsGateway: false })
+        {
+            await LoadReadingsAsync();
+        }
+    }
+
+    private void SelectLink(TopologyLinkDto link)
+    {
+        _selectedLink = (link.A, link.B);
+        _selectedId = null;
+        _route = null;
+        _readings = null;
+        UpdateHighlights();
+    }
+
+    private void ClearSelection()
+    {
+        _selectedId = null;
+        _selectedLink = null;
+        _route = null;
+        _readings = null;
+        _bfs = null;
+        _bfsOrder = [];
+        UpdateHighlights();
+    }
+
+    private void ToggleTree()
+    {
+        _showTree = !_showTree;
+    }
+
+    private void ChooseRoute(bool viaTree)
+    {
+        _routeViaTree = viaTree;
+        UpdateHighlights();
+    }
+
+    // ------------------------------------------------------------------ actions
+
+    private async Task SetLinkAsync(TopologyLinkDto link)
+    {
+        _busy = true;
+        try
+        {
+            await Api.SetLinkAsync(link.A, link.B, !link.IsUp);
+
+            // the old search no longer matches the network
+            _bfs = null;
+            _bfsOrder = [];
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = SmartXApiClient.DescribeError(ex);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task SimulateOutageAsync(string id)
+    {
+        _busy = true;
+        try
+        {
+            await Api.SimulateOutageAsync(id, 20);
+            _outageNote = $"{NameOf(id)} has stopped sending data for 20 seconds. It turns offline after about 8 seconds and the routes update by themselves.";
+            _error = null;
+        }
+        catch (Exception ex)
+        {
+            _error = SmartXApiClient.DescribeError(ex);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task RunBfsAsync(string? startId)
+    {
+        _busy = true;
+        try
+        {
+            _bfs = await Api.RunBfsAsync(startId);
+            _bfsOrder = _bfs is null
+                ? []
+                : _bfs.Steps.ToDictionary(step => step.NodeId, step => step.Order);
+            _error = null;
+        }
+        catch (Exception ex)
+        {
+            _error = SmartXApiClient.DescribeError(ex);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task QuickRangeAsync(int seconds)
+    {
+        _to = DateTime.Now;
+        _from = _to.AddSeconds(-seconds);
+        await LoadReadingsAsync();
+    }
+
+    private async Task LoadReadingsAsync()
+    {
+        if (_selectedId is null)
+        {
+            return;
+        }
+
+        _readingsLoading = true;
+        try
+        {
+            _readings = await Api.GetReadingsAsync(_selectedId, new DateTimeOffset(_from), new DateTimeOffset(_to));
+            _error = null;
+        }
+        catch (Exception ex)
+        {
+            _error = SmartXApiClient.DescribeError(ex);
+        }
+        finally
+        {
+            _readingsLoading = false;
+        }
+    }
+
+    // ------------------------------------------------------------------ helpers
+
+    private TopologyNodeDto? SelectedNode => _topology?.Nodes.FirstOrDefault(n => n.Id == _selectedId);
+
+    private TopologyLinkDto? SelectedLinkDto => _selectedLink is { } sel
+        ? _topology?.Links.FirstOrDefault(l => LinkKey(l.A, l.B) == LinkKey(sel.A, sel.B))
+        : null;
+
+    private TopologyNodeDto? NodeById(string id) => _topology?.Nodes.FirstOrDefault(n => n.Id == id);
+
+    private string NameOf(string id) => NodeById(id)?.Name ?? id;
+
+    private string PathText(List<string> path) =>
+        path.Count == 0 ? "No route" : string.Join("  →  ", path.Select(NameOf));
+
+    private bool RoutesDiffer =>
+        _route is not null && _route.FewestHopsPath.Count > 0 && _route.TreePath.Count > 0
+        && !_route.FewestHopsPath.SequenceEqual(_route.TreePath);
+
+    private static string LinkKey(string a, string b) =>
+        string.CompareOrdinal(a, b) <= 0 ? $"{a}|{b}" : $"{b}|{a}";
+
+    private bool InTree(TopologyLinkDto link) => _mst is not null && _mst.Links.Any(l => LinkKey(l.A, l.B) == LinkKey(link.A, link.B));
+
+    private void UpdateHighlights()
+    {
+        _treeKeys = _mst is null ? [] : _mst.Links.Select(l => LinkKey(l.A, l.B)).ToHashSet();
+
+        var path = _route is null ? [] : (_routeViaTree ? _route.TreePath : _route.FewestHopsPath);
+        _routeKeys = [];
+        for (var i = 0; i + 1 < path.Count; i++)
+        {
+            _routeKeys.Add(LinkKey(path[i], path[i + 1]));
+        }
+    }
+
+    private List<(TopologyNodeDto Node, TopologyLinkDto Link)> NeighbourLinks(string id) =>
+        _topology is null
+            ? []
+            : _topology.Links
+                .Where(l => l.A == id || l.B == id)
+                .Select(l => (Node: NodeById(l.A == id ? l.B : l.A)!, Link: l))
+                .OrderBy(pair => pair.Link.Cost)
+                .ToList();
+
+    /// <summary>Two letters to put inside a node: first letter of the first word and of the last word ("Moisture Sensor B" gives "MB").</summary>
+    private static string ShortCode(string name)
+    {
+        var words = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return words.Length == 0 ? "?" : words.Length == 1 ? words[0][..1] : $"{words[0][0]}{words[^1][0]}";
+    }
+
+    private static string LinkState(TopologyLinkDto link) =>
+        !link.IsUp ? "switched off" : link.IsUsable ? "working" : "other end offline";
+
+    private static string Px(double metres) =>
+        (metres * Scale).ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
+
+    /// <summary>Same as Px, then moves by a number of SVG units (not metres), e.g. to put a label under a node.</summary>
+    private static string PxPlus(double metres, double units) =>
+        (metres * Scale + units).ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
+
+    private string LinkClass(TopologyLinkDto link)
+    {
+        var key = LinkKey(link.A, link.B);
+        string state;
+
+        if (!link.IsUp)
+        {
+            state = "link-down";
+        }
+        else if (!link.IsUsable)
+        {
+            state = "link-blocked";
+        }
+        else if (_showTree)
+        {
+            state = _treeKeys.Contains(key) ? "link-tree" : "link-faint";
+        }
+        else
+        {
+            state = "link-up";
+        }
+
+        if (_routeKeys.Contains(key))
+        {
+            state = "link-route";
+        }
+
+        if (_selectedLink is { } sel && key == LinkKey(sel.A, sel.B))
+        {
+            state += " link-selected";
+        }
+
+        return state;
+    }
+
+    private bool ShowCost(TopologyLinkDto link)
+    {
+        var key = LinkKey(link.A, link.B);
+        return _routeKeys.Contains(key)
+            || (_showTree && _treeKeys.Contains(key) && link.IsUsable)
+            || (_selectedLink is { } sel && key == LinkKey(sel.A, sel.B));
+    }
+
+    private string NodeClass(TopologyNodeDto node)
+    {
+        var state = node.IsGateway ? "node-gateway"
+            : !node.IsOnline ? "node-offline"
+            : !node.CanReachGateway ? "node-cutoff"
+            : "node-online";
+
+        return node.Id == _selectedId ? $"node {state} node-selected" : $"node {state}";
+    }
+
+    private static string StatusText(TopologyNodeDto node) =>
+        node.IsGateway ? "Gateway" : !node.IsOnline ? "Offline" : !node.CanReachGateway ? "Cut off" : "Online";
+
+    private static string StatusPill(TopologyNodeDto node) =>
+        node.IsGateway ? "sx-pill-muted" : !node.IsOnline ? "sx-pill-disconnected" : !node.CanReachGateway ? "sx-pill-fault" : "sx-pill-active";
+
+    public void Dispose()
+    {
+        _cts?.Cancel();
+        _cts?.Dispose();
+    }
 }

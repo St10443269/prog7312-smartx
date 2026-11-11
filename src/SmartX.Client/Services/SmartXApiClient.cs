@@ -118,6 +118,32 @@ public sealed class SmartXApiClient(HttpClient http)
         return await GetAsync<List<HistoryEntryDto>>($"api/history?{string.Join('&', parameters)}") ?? [];
     }
 
+    // ------------------------------------------------ Part 3: network topology
+
+    public async Task<TopologyDto?> GetTopologyAsync() =>
+        await GetAsync<TopologyDto>("api/topology");
+
+    public async Task<RouteDto?> GetRouteAsync(string id) =>
+        await GetAsync<RouteDto>($"api/topology/route/{Uri.EscapeDataString(id)}");
+
+    public async Task<MstDto?> GetSpanningTreeAsync() =>
+        await GetAsync<MstDto>("api/topology/mst");
+
+    /// <summary>Runs BFS on the API. Leave <paramref name="startId"/> empty to start at the gateway.</summary>
+    public async Task<BfsDto?> RunBfsAsync(string? startId) =>
+        await GetAsync<BfsDto>(string.IsNullOrWhiteSpace(startId)
+            ? "api/topology/bfs"
+            : $"api/topology/bfs?from={Uri.EscapeDataString(startId)}");
+
+    public async Task<TopologyLinkDto?> SetLinkAsync(string a, string b, bool isUp) =>
+        await PostForAsync<TopologyLinkDto>(
+            $"api/topology/links/up?a={Uri.EscapeDataString(a)}&b={Uri.EscapeDataString(b)}&isUp={(isUp ? "true" : "false")}");
+
+    public async Task<ReadingQueryDto?> GetReadingsAsync(string id, DateTimeOffset from, DateTimeOffset to) =>
+        await GetAsync<ReadingQueryDto>(
+            $"api/topology/readings/{Uri.EscapeDataString(id)}" +
+            $"?from={Uri.EscapeDataString(from.ToString("o"))}&to={Uri.EscapeDataString(to.ToString("o"))}");
+
     public async Task<List<SearchRecordDto>> GetSearchHistoryAsync(int take = 20) =>
         await GetAsync<List<SearchRecordDto>>($"api/devices/searches?take={take}") ?? [];
 
