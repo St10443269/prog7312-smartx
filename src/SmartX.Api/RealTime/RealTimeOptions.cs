@@ -54,6 +54,9 @@ public sealed class RealTimeOptions
 
         /// <summary>Oldest history entries are dropped beyond this many (memory cap for the in-memory log).</summary>
         public int MaxHistoryEntries { get; set; } = 5000;
+
+        /// <summary>Most readings kept per sensor in the AVL tree; the oldest are removed beyond this.</summary>
+        public int MaxReadingsPerSensor { get; set; } = 5000;
     }
 
     public sealed class SimulatorOptions
