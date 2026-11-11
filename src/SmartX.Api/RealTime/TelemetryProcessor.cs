@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using SmartX.Api.Services;
+using SmartX.Api.Topology;
 using SmartX.Shared.Dto;
 using SmartX.Shared.Enums;
 
@@ -54,6 +55,7 @@ public sealed partial class TelemetryProcessor(
     TelemetryClassifier classifier,
     LiveUpdateBroadcaster broadcaster,
     ITelemetryStore partOneStore,
+    ReadingHistory readings,
     RealTimeOptions options,
     TimeProvider clock)
 {
@@ -286,6 +288,9 @@ public sealed partial class TelemetryProcessor(
         var readingEntry = history.Add(message.CapturedAtUtc, HistoryEntryKind.Reading, device.MacAddress, device.Name,
             $"{message.SensorType} = {message.Value:0.##} {device.Unit}".TrimEnd(),
             message.Severity, message.SensorType, message.Value);
+
+        // Part 3: every processed reading also goes into the AVL tree for this sensor
+        readings.Add(new TelemetryReading(device.MacAddress, message.SensorType, message.CapturedAtUtc, message.Value));
 
         if (message.AlertCode is { } code)
         {

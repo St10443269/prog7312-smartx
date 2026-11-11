@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 using SmartX.Api.Endpoints;
 using SmartX.Api.RealTime;
 using SmartX.Api.Services;
+using SmartX.Api.Topology;
 
 // HTTP/JSON via Minimal APIs (Microsoft, n.d.a) rather than a broker protocol
 // such as MQTT (OASIS, 2019) or CoAP (Internet Engineering Task Force, 2014):
@@ -48,6 +49,8 @@ builder.Services.AddSingleton<HistoryLog>();
 builder.Services.AddSingleton<ActiveErrorTracker>();
 builder.Services.AddSingleton<TelemetryClassifier>();
 builder.Services.AddSingleton<LiveUpdateBroadcaster>();
+builder.Services.AddSingleton<ReadingHistory>();
+builder.Services.AddSingleton<MeshTopology>();
 builder.Services.AddSingleton<TelemetryProcessor>();
 builder.Services.AddHostedService<ProcessingWorker>();
 builder.Services.AddSingleton<CommandService>();
@@ -76,6 +79,7 @@ app.MapGroup("/api/sensors").MapSensorEndpoints();
 app.MapGroup("/api/telemetry").MapTelemetryEndpoints();
 app.MapGroup("/api/deployment").MapDeploymentEndpoints();
 app.MapGroup("/api/stream").MapStreamEndpoints();
+app.MapGroup("/api/topology").MapTopologyEndpoints();
 app.MapGroup("/api/simulator").MapSimulatorEndpoints();
 app.MapGroup("/api/commands").MapCommandEndpoints();
 app.MapGroup("/api/devices").MapDeviceEndpoints();
