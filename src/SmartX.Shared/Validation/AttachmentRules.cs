@@ -3,7 +3,7 @@ namespace SmartX.Shared.Validation;
 /// <summary>
 /// What files can be attached to a sensor. The Sensors page checks a file
 /// against these rules before uploading it, and the API checks them again
-/// (following the upload-validation advice in OWASP Foundation, n.d.: allow only
+/// (following the upload-validation advice in OWASP Foundation (n.d.): allow only
 /// known file types and limit the size).
 /// </summary>
 public static class AttachmentRules
