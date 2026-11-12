@@ -207,7 +207,7 @@ carry over between pages.
 | Pillar | Page | What it does |
 |---|---|---|
 | 1 | **Telemetry** | Part 1 pulse feed, heatmap and gauge. Now also shows the live simulated readings. |
-| 1 | **Sensors** | Register a device and attach files. A newly registered device also joins the Part 2 network. |
+| 1 | **Sensors** | Register a device (every field is checked, and each wrong field shows its own message) and attach files. Each device has a *Files* panel with an upload box, a list of its files and a download link for each. A newly registered device also joins the Part 2 network. |
 | 1 | **Deployment Tree** | Recursive deployment-tree validation. |
 | 2 | **Live Dashboard** (`/stream`) | Device cards with live readings, status, alerts and ON/OFF buttons; search and filters; active errors; live event stream; top suggestions; simulator on/off. |
 | 2 | **Commands & Undo** (`/stream/commands`) | Send commands, see the undo stack, undo, simulate an outage, full command history. |
@@ -597,8 +597,9 @@ Every packet sensor type: `SoilMoisturePct` (0-100), `PowerWatts` (≥ 0),
 | Method | Route | Purpose |
 |---|---|---|
 | GET | `/api/sensors` | List registered sensors |
-| POST | `/api/sensors` | Register a sensor (also joins the Part 2 registry) |
-| POST | `/api/sensors/{id}/attachments` | Upload a file attachment (multipart) |
+| POST | `/api/sensors` | Register a sensor (also joins the Part 2 registry). The MAC must be six hex pairs with one kind of separator and is stored as `AA:BB:CC:DD:EE:FF`. Bad fields give 400 with a message for each, a MAC that is already registered gives 409. |
+| GET | `/api/sensors/{id}/attachments` | List the files attached to a sensor, newest first |
+| POST | `/api/sensors/{id}/attachments` | Upload a file attachment (multipart). Allowed types: `.json .yaml .yml .txt .log .cfg .conf .png .jpg .jpeg .pdf`, up to 25 MB. |
 | GET | `/api/sensors/{id}/attachments/{attachmentId}` | Download an attachment |
 | POST | `/api/telemetry` | Ingest a single reading |
 | POST | `/api/telemetry/batch` | Ingest a jagged per-device sample batch |
@@ -618,8 +619,9 @@ dotnet test tests/SmartX.Tests
 > On Windows, **stop the API first**. A running API locks its DLLs, and the
 > test build then fails with "file is being used by another process".
 
-110 xUnit tests run against the real services (56 for Part 2 and 54 for
-Part 3), wired up with a fake clock and no web server. The Part 2 tests cover:
+144 xUnit tests run against the real services (56 for Part 2, 54 for Part 3
+and 34 for the Part 1 sensor and file rules), wired up with a fake clock and no
+web server. The Part 2 tests cover:
 
 - FIFO order, critical-before-normal, priority ties and the starvation guard
   ([`TelemetryProcessorTests`](tests/SmartX.Tests/TelemetryProcessorTests.cs)).
@@ -658,6 +660,12 @@ The Part 3 tests cover:
   links off and on, spanning tree changes, BFS lists, devices added later, and
   networks with no devices or one device
   ([`MeshTopologyTests`](tests/SmartX.Tests/MeshTopologyTests.cs)).
+
+The Part 1 rules (updated after the Part 1 feedback) are covered by
+[`SensorInputTests`](tests/SmartX.Tests/SensorInputTests.cs): good and bad MAC
+addresses (wrong length, not hex, no separators, mixed separators), blank and
+too-long fields, an unknown category, which file types are allowed, the size
+limit, and how file sizes are shown.
 
 The Blazor pages are not covered by automated UI tests. They were checked by
 hand in the browser.
