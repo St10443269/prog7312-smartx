@@ -619,8 +619,8 @@ dotnet test tests/SmartX.Tests
 > On Windows, **stop the API first**. A running API locks its DLLs, and the
 > test build then fails with "file is being used by another process".
 
-144 xUnit tests run against the real services (56 for Part 2, 54 for Part 3
-and 34 for the Part 1 sensor and file rules), wired up with a fake clock and no
+148 xUnit tests run against the real services (56 for Part 2, 54 for Part 3
+and 38 for the Part 1 sensor rules, file rules and sensor store), wired up with a fake clock and no
 web server. The Part 2 tests cover:
 
 - FIFO order, critical-before-normal, priority ties and the starvation guard
@@ -661,11 +661,11 @@ The Part 3 tests cover:
   networks with no devices or one device
   ([`MeshTopologyTests`](tests/SmartX.Tests/MeshTopologyTests.cs)).
 
-The Part 1 rules (updated after the Part 1 feedback) are covered by
+The Part 1 sensor and file rules are covered by
 [`SensorInputTests`](tests/SmartX.Tests/SensorInputTests.cs): good and bad MAC
 addresses (wrong length, not hex, no separators, mixed separators), blank and
 too-long fields, an unknown category, which file types are allowed, the size
-limit, and how file sizes are shown.
+limit, and how file sizes are shown. [`SensorRepositoryTests`](tests/SmartX.Tests/SensorRepositoryTests.cs) checks the MAC lookup in the Part 1 sensor store.
 
 The Blazor pages are not covered by automated UI tests. They were checked by
 hand in the browser.
