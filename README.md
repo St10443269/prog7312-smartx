@@ -37,19 +37,20 @@ A dashboard and API to interface with the Smart-X environment (smart grids, util
 3. [Running the application](#running-the-application)
 4. [Configuration](#configuration)
 5. [Using the application](#using-the-application)
-6. [Part 2 data structures - where and why](#part-2-data-structures---where-and-why)
-7. [Real-time updates (Server-Sent Events)](#real-time-updates-server-sent-events)
-8. [Recommendation engine](#recommendation-engine)
-9. [Part 3 data structures and algorithms - where and why](#part-3-data-structures-and-algorithms---where-and-why)
-10. [Network topology and routing (Part 3)](#network-topology-and-routing-part-3)
-11. [Testing each feature by hand](#testing-each-feature-by-hand)
-12. [API reference](#api-reference)
-13. [Automated tests](#automated-tests)
-14. [Troubleshooting](#troubleshooting)
-15. [Limitations and assumptions](#limitations-and-assumptions)
-16. [Part 1 C# concepts](#part-1-c-concepts)
-17. [References](#references)
-18. [Third-party assets](#third-party-assets)
+6. [Screenshots](#screenshots)
+7. [Part 2 data structures - where and why](#part-2-data-structures---where-and-why)
+8. [Real-time updates (Server-Sent Events)](#real-time-updates-server-sent-events)
+9. [Recommendation engine](#recommendation-engine)
+10. [Part 3 data structures and algorithms - where and why](#part-3-data-structures-and-algorithms---where-and-why)
+11. [Network topology and routing (Part 3)](#network-topology-and-routing-part-3)
+12. [Testing each feature by hand](#testing-each-feature-by-hand)
+13. [API reference](#api-reference)
+14. [Automated tests](#automated-tests)
+15. [Troubleshooting](#troubleshooting)
+16. [Limitations and assumptions](#limitations-and-assumptions)
+17. [Part 1 C# concepts](#part-1-c-concepts)
+18. [References](#references)
+19. [Third-party assets](#third-party-assets)
 
 ## Architecture
 
@@ -253,6 +254,58 @@ Commands change the simulated devices:
 
 - Turn Pump A on and Moisture Sensor B goes up
 - Turn a plug off and its power drops to about 0 W
+
+## Screenshots
+
+All screenshots show the application running with the simulated devices.
+
+### Home
+
+![Home page with the three parts](docs/images/home.png)
+
+The home page has a card for each part. All three open from the sidebar.
+
+### Part 1 - Sensor Data Ingestion & Telemetry
+
+![Telemetry page with the live pulse, heatmap and gauge](docs/images/telemetry.png)
+
+**Telemetry:** the live pulse, the grid load heatmap and the gauge.
+
+![Sensors page with the register form and the device list](docs/images/sensors.png)
+
+**Sensors:** register a device and attach files with the **Add files** button.
+
+![Deployment Tree page showing four validation issues](docs/images/deployment-tree.png)
+
+**Deployment Tree:** the recursive validator found four issues in the broken sample.
+
+### Part 2 - Real-Time Command Stream & History
+
+![Live Dashboard with device cards, active errors and the live event stream](docs/images/live-dashboard.png)
+
+**Live Dashboard:** device cards, active errors, the live event stream and the suggested actions.
+
+![Commands and Undo page with the undo stack and command history](docs/images/commands-undo.png)
+
+**Commands & Undo:** the undo stack (last in, first out) and the command history.
+
+![Queues and Alerts page with queue sizes and processing order](docs/images/queues-alerts.png)
+
+**Queues & Alerts:** the normal queue, the priority queue, active errors and the processing order.
+
+![History Log with a chart and the entries in time order](docs/images/history-log.png)
+
+**History Log:** the chart and the entries in time order.
+
+![Suggested Actions page with a recurring fault suggestion](docs/images/suggested-actions.png)
+
+**Suggested Actions:** each suggestion shows why it was made.
+
+### Part 3 - Network Topology & Mesh Routing
+
+![Network Topology page with the gateway, nine sensors and the links between them](docs/images/network-topology.png)
+
+**Network Topology:** the gateway and the nine sensors. Click a sensor to see its route, press *Show spanning tree* to see the cheapest links, or press *Run search from gateway* to run the breadth-first search.
 
 ## Part 2 data structures - where and why
 
