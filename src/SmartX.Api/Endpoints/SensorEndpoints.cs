@@ -2,15 +2,12 @@ using SmartX.Api.RealTime;
 using SmartX.Api.Services;
 using SmartX.Shared.Dto;
 using SmartX.Shared.Models;
+using SmartX.Shared.Validation;
 
 namespace SmartX.Api.Endpoints;
 
 public static class SensorEndpoints
 {
-    private const long MaxAttachmentBytes = 25 * 1024 * 1024; // 25 MB
-    private static readonly HashSet<string> AllowedExtensions =
-        [".json", ".yaml", ".yml", ".txt", ".log", ".cfg", ".conf", ".png", ".jpg", ".jpeg", ".pdf"];
-
     public static RouteGroupBuilder MapSensorEndpoints(this RouteGroupBuilder group)
     {
         group.MapGet("/", (ISensorRepository repo) =>
@@ -21,26 +18,29 @@ public static class SensorEndpoints
 
         group.MapPost("/", (RegisterSensorRequest request, ISensorRepository repo, DeviceRegistry registry) =>
         {
-            if (string.IsNullOrWhiteSpace(request.MacAddress))
+            // the same rules the Sensors page checks before sending
+            var problems = SensorRegistrationValidator.Validate(request);
+            if (problems.Count > 0)
             {
-                return Results.ValidationProblem(new Dictionary<string, string[]>
-                {
-                    ["macAddress"] = ["MAC address is required."]
-                });
+                return Results.ValidationProblem(problems.ToDictionary(p => p.Key, p => new[] { p.Value }));
             }
 
-            if (registry.Contains(request.MacAddress) || repo.MacAddressExists(request.MacAddress))
+            // store the MAC in one standard format (upper case, ":" separators)
+            // so "24-6f-28-aa-11-01" and "24:6F:28:AA:11:01" are the same device
+            var mac = DeviceRegistry.NormaliseMac(request.MacAddress);
+
+            if (registry.Contains(mac) || repo.MacAddressExists(mac))
             {
-                return Results.Conflict(new { message = $"A sensor with MAC address '{request.MacAddress}' is already registered." });
+                return Results.Conflict(new { message = $"A sensor with MAC address '{mac}' is already registered." });
             }
 
             var sensor = repo.Add(new SensorRegistration
             {
-                MacAddress = request.MacAddress,
-                FacilityName = request.FacilityName,
-                ZoneName = request.ZoneName,
-                SubZoneName = request.SubZoneName,
-                NodeId = request.NodeId,
+                MacAddress = mac,
+                FacilityName = request.FacilityName.Trim(),
+                ZoneName = request.ZoneName.Trim(),
+                SubZoneName = string.IsNullOrWhiteSpace(request.SubZoneName) ? null : request.SubZoneName.Trim(),
+                NodeId = request.NodeId.Trim(),
                 Category = request.Category
             });
 
@@ -73,18 +73,15 @@ public static class SensorEndpoints
                 return Results.BadRequest(new { message = "No file was uploaded." });
             }
 
-            if (file.Length > MaxAttachmentBytes)
+            // Extension allow-listing and a size cap follow the upload-validation
+            // guidance in OWASP Foundation (n.d.). The rules are shared with the
+            // Sensors page, which checks them before uploading.
+            if (AttachmentRules.Check(file.FileName, file.Length) is { } problem)
             {
-                return Results.BadRequest(new { message = "File exceeds the 25 MB attachment limit." });
+                return Results.BadRequest(new { message = problem });
             }
 
-            // Extension allow-listing and a size cap follow the upload-validation
-            // guidance in OWASP Foundation (n.d.).
-            var extension = Path.GetExtension(file.FileName);
-            if (!AllowedExtensions.Contains(extension.ToLowerInvariant()))
-            {
-                return Results.BadRequest(new { message = $"File type '{extension}' is not permitted." });
-            }
+            var extension = Path.GetExtension(file.FileName).ToLowerInvariant();
 
             var uploadsRoot = Path.Combine(env.ContentRootPath, "App_Data", "uploads");
             Directory.CreateDirectory(uploadsRoot);
@@ -113,6 +110,24 @@ public static class SensorEndpoints
                 ? Results.NotFound()
                 : Results.Created($"/api/sensors/{id}/attachments/{attachment.Id}", ToAttachmentDto(attachment));
         }).DisableAntiforgery();
+
+        // the files attached to one sensor, newest first
+        group.MapGet("/{id:guid}/attachments", (Guid id, ISensorRepository repo) =>
+        {
+            var sensor = repo.GetById(id);
+            if (sensor is null)
+            {
+                return Results.NotFound(new { message = "Sensor not found." });
+            }
+
+            List<SensorAttachment> files;
+            lock (sensor.Attachments)
+            {
+                files = sensor.Attachments.ToList();
+            }
+
+            return Results.Ok(files.OrderByDescending(a => a.UploadedAtUtc).Select(ToAttachmentDto));
+        });
 
         group.MapGet("/{id:guid}/attachments/{attachmentId:guid}", (Guid id, Guid attachmentId, ISensorRepository repo) =>
         {
