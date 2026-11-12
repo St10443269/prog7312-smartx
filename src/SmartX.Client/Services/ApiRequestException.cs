@@ -5,3 +5,6 @@ public sealed class ApiRequestException(string message, int statusCode) : Except
 {
     public int StatusCode { get; } = statusCode;
 }
+
+/// <summary>What came back from registering a sensor: success, a message per wrong field, or one general message.</summary>
+public sealed record RegisterResult(bool Success, Dictionary<string, string> FieldErrors, string? Error);

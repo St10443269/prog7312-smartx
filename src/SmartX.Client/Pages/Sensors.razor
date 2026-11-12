@@ -16,37 +16,43 @@
 
         <label>
             MAC Address
-            <InputText class="sx-input" @bind-Value="_form.MacAddress" placeholder="24:6F:28:AA:11:01" />
+            <InputText class="@FieldClass("macAddress")" @bind-Value="_form.MacAddress" placeholder="24:6F:28:AA:11:01" />
+            <FieldMessage Text="@ErrorFor("macAddress")" />
         </label>
 
         <label>
             Facility
-            <InputText class="sx-input" @bind-Value="_form.FacilityName" placeholder="Facility A" />
+            <InputText class="@FieldClass("facilityName")" @bind-Value="_form.FacilityName" placeholder="Facility A" />
+            <FieldMessage Text="@ErrorFor("facilityName")" />
         </label>
 
         <label>
             Zone
-            <InputText class="sx-input" @bind-Value="_form.ZoneName" placeholder="Zone 1" />
+            <InputText class="@FieldClass("zoneName")" @bind-Value="_form.ZoneName" placeholder="Zone 1" />
+            <FieldMessage Text="@ErrorFor("zoneName")" />
         </label>
 
         <label>
             Sub-Zone <span class="optional">(optional)</span>
-            <InputText class="sx-input" @bind-Value="_form.SubZoneName" placeholder="Sub-Zone B" />
+            <InputText class="@FieldClass("subZoneName")" @bind-Value="_form.SubZoneName" placeholder="Sub-Zone B" />
+            <FieldMessage Text="@ErrorFor("subZoneName")" />
         </label>
 
         <label>
             Node ID
-            <InputText class="sx-input" @bind-Value="_form.NodeId" placeholder="Hydroponic Node 1" />
+            <InputText class="@FieldClass("nodeId")" @bind-Value="_form.NodeId" placeholder="Hydroponic Node 1" />
+            <FieldMessage Text="@ErrorFor("nodeId")" />
         </label>
 
         <label>
             Category
-            <InputSelect class="sx-input" @bind-Value="_form.Category">
+            <InputSelect class="@FieldClass("category")" @bind-Value="_form.Category">
                 @foreach (var category in Enum.GetValues<SensorCategory>())
                 {
                     <option value="@category">@category</option>
                 }
             </InputSelect>
+            <FieldMessage Text="@ErrorFor("category")" />
         </label>
 
         <button type="submit" class="sx-btn-primary" disabled="@_submitting">
@@ -85,20 +91,20 @@
                             <th>Category</th>
                             <th>MAC</th>
                             <th>Files</th>
-                            <th>Attach</th>
                         </tr>
                     </thead>
                     <tbody>
                         @foreach (var sensor in _sensors)
                         {
-                            <tr>
+                            <tr class="@(sensor.Id == _selected?.Id ? "selected-row" : "")">
                                 <td>@sensor.NodeId</td>
                                 <td>@sensor.DeploymentPath</td>
                                 <td><span class="cat-badge cat-@sensor.Category.ToString().ToLowerInvariant()">@sensor.Category</span></td>
                                 <td class="mono">@sensor.MacAddress</td>
-                                <td>@sensor.AttachmentCount</td>
                                 <td>
-                                    <InputFile class="sx-file" OnChange="args => UploadAsync(sensor.Id, args)" />
+                                    <button class="files-btn" @onclick="() => OpenFilesAsync(sensor)">
+                                        @(sensor.AttachmentCount == 0 ? "Add files" : $"{sensor.AttachmentCount} file(s)")
+                                    </button>
                                 </td>
                             </tr>
                         }
@@ -109,6 +115,77 @@
     </div>
 </div>
 
+@if (_selected is not null)
+{
+    <section class="sx-card files-card">
+        <div class="files-head">
+            <h2>Files for @_selected.NodeId <span class="count-badge">@_files.Count</span></h2>
+            <button class="files-btn" @onclick="CloseFiles">Close</button>
+        </div>
+
+        <div class="upload-box">
+            <label class="upload-label">
+                Choose a file to attach
+                @* the key changes after every upload so the same file can be picked again *@
+                <InputFile @key="_uploadKey" class="sx-file" OnChange="UploadAsync" disabled="@_uploading" />
+            </label>
+            <p class="hint">Allowed types: @AttachmentRules.AllowedText. Up to @AttachmentRules.FormatSize(AttachmentRules.MaxBytes).</p>
+
+            @if (_uploading)
+            {
+                <p class="muted">Uploading...</p>
+            }
+            @if (_uploadError is not null)
+            {
+                <p class="error">@_uploadError</p>
+            }
+            @if (_uploadSuccess is not null)
+            {
+                <p class="success">@_uploadSuccess</p>
+            }
+        </div>
+
+        @if (_filesError is not null)
+        {
+            <p class="error">@_filesError</p>
+        }
+        else if (_filesLoading)
+        {
+            <p class="muted">Loading files...</p>
+        }
+        else if (_files.Count == 0)
+        {
+            <p class="muted">No files attached to this device yet.</p>
+        }
+        else
+        {
+            <div class="table-scroll">
+                <table class="files-table">
+                    <thead>
+                        <tr>
+                            <th>File</th>
+                            <th>Size</th>
+                            <th>Uploaded</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var file in _files)
+                        {
+                            <tr>
+                                <td>@file.FileName</td>
+                                <td class="mono">@AttachmentRules.FormatSize(file.SizeBytes)</td>
+                                <td>@file.UploadedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                                <td><a class="download" href="@Api.AttachmentUrl(_selected.Id, file.Id)" target="_blank" rel="noopener">Download</a></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </section>
+}
+
 <style>
     .page-kicker { font-family: var(--sx-font-mono); color: var(--sx-cyan); font-size: 0.8rem; letter-spacing: 0.15em; margin-bottom: 0.4rem; opacity: 0.85; }
     .page-lead { color: var(--sx-text-dim); margin-bottom: 1.5rem; }
@@ -118,6 +195,7 @@
     .sx-card h2 { font-size: 1.05rem; margin: 0 0 1rem; }
     .sx-card label { display: block; margin-bottom: 0.85rem; font-size: 0.85rem; font-weight: 600; color: var(--sx-text-dim); }
     .sx-card .sx-input { display: block; width: 100%; margin-top: 0.3rem; padding: 0.5rem 0.65rem; font-weight: 400; font-family: var(--sx-font-body); font-size: 0.95rem; }
+    .sx-card .sx-input.invalid { border-color: var(--sx-red); }
     .optional { font-weight: 400; color: var(--sx-text-faint); }
 
     .sx-btn-primary { border: none; padding: 0.6rem 1.2rem; border-radius: 8px; cursor: pointer; }
@@ -134,10 +212,11 @@
     }
 
     .table-scroll { overflow-x: auto; }
-    table { width: 100%; border-collapse: collapse; font-size: 0.88rem; min-width: 640px; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.88rem; min-width: 560px; }
     th { text-align: left; padding: 0.5rem; font-family: var(--sx-font-mono); font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--sx-text-faint); border-bottom: 1px solid var(--sx-border); }
     td { text-align: left; padding: 0.55rem 0.5rem; border-bottom: 1px solid rgba(255,255,255,0.04); color: var(--sx-text); }
     tbody tr:hover { background: rgba(0, 229, 255, 0.04); }
+    tr.selected-row { background: rgba(0, 229, 255, 0.08); }
     .mono { font-family: var(--sx-font-mono); font-size: 0.82rem; color: var(--sx-cyan); }
 
     .cat-badge {
@@ -148,7 +227,22 @@
     .cat-powerconsumption { color: var(--sx-amber); }
     .cat-actuator { color: var(--sx-purple); }
 
-    .sx-file { color: var(--sx-text-dim); font-size: 0.82rem; max-width: 160px; }
+    .files-btn {
+        background: rgba(0, 229, 255, 0.1); color: var(--sx-cyan); border: 1px solid rgba(0, 229, 255, 0.3);
+        border-radius: 6px; padding: 0.25rem 0.7rem; font-family: var(--sx-font-body); font-weight: 600; font-size: 0.82rem; cursor: pointer;
+    }
+    .files-btn:hover { background: rgba(0, 229, 255, 0.2); }
+
+    .files-card { margin-top: 1.25rem; }
+    .files-head { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; flex-wrap: wrap; }
+    .upload-box { border: 1px dashed rgba(0, 229, 255, 0.3); border-radius: 10px; padding: 0.9rem 1rem; margin-bottom: 1rem; }
+    .upload-label { display: block; margin-bottom: 0.4rem; font-weight: 600; color: var(--sx-text-dim); }
+    .hint { font-size: 0.8rem; color: var(--sx-text-faint); margin: 0.4rem 0 0; }
+    .files-table { min-width: 420px; }
+    a.download { color: var(--sx-cyan); font-weight: 600; text-decoration: none; }
+    a.download:hover { text-decoration: underline; }
+
+    .sx-file { color: var(--sx-text-dim); font-size: 0.85rem; max-width: 100%; }
     .sx-file::file-selector-button {
         background: rgba(0, 229, 255, 0.1); color: var(--sx-cyan); border: 1px solid rgba(0, 229, 255, 0.3);
         border-radius: 6px; padding: 0.3rem 0.6rem; font-family: var(--sx-font-body); font-weight: 600; cursor: pointer; margin-right: 0.5rem;
@@ -169,11 +263,30 @@
     private string? _success;
     private string? _loadError;
 
+    // a message for each wrong field, keyed by the same names the API uses
+    private Dictionary<string, string> _fieldErrors = [];
+
+    // the device whose files are shown below the table
+    private SensorSummaryDto? _selected;
+    private List<SensorAttachmentDto> _files = [];
+    private bool _filesLoading;
+    private string? _filesError;
+    private bool _uploading;
+    private string? _uploadError;
+    private string? _uploadSuccess;
+    private int _uploadKey;
+
     protected override async Task OnInitializedAsync() => await RefreshAsync();
 
     private async Task RefreshAsync()
     {
         _loading = true;
+        await LoadSensorsAsync();
+        _loading = false;
+    }
+
+    private async Task LoadSensorsAsync()
+    {
         try
         {
             _sensors = await Api.GetSensorsAsync();
@@ -183,39 +296,46 @@
         {
             _loadError = SmartXApiClient.DescribeError(ex);
         }
-        finally
-        {
-            _loading = false;
-        }
     }
 
     private async Task RegisterAsync()
     {
-        _submitting = true;
         _error = null;
         _success = null;
 
+        var request = new RegisterSensorRequest
+        {
+            MacAddress = _form.MacAddress.Trim(),
+            FacilityName = _form.FacilityName.Trim(),
+            ZoneName = _form.ZoneName.Trim(),
+            SubZoneName = string.IsNullOrWhiteSpace(_form.SubZoneName) ? null : _form.SubZoneName.Trim(),
+            NodeId = _form.NodeId.Trim(),
+            Category = _form.Category
+        };
+
+        // check the same rules the API checks, so mistakes are caught before sending
+        _fieldErrors = SensorRegistrationValidator.Validate(request);
+        if (_fieldErrors.Count > 0)
+        {
+            _error = "Please fix the highlighted fields.";
+            return;
+        }
+
+        _submitting = true;
         try
         {
-            var (success, error) = await Api.RegisterSensorAsync(new RegisterSensorRequest
-            {
-                MacAddress = _form.MacAddress.Trim(),
-                FacilityName = _form.FacilityName.Trim(),
-                ZoneName = _form.ZoneName.Trim(),
-                SubZoneName = string.IsNullOrWhiteSpace(_form.SubZoneName) ? null : _form.SubZoneName.Trim(),
-                NodeId = _form.NodeId.Trim(),
-                Category = _form.Category
-            });
+            var result = await Api.RegisterSensorAsync(request);
 
-            if (success)
+            if (result.Success)
             {
-                _success = $"Registered '{_form.NodeId}'.";
+                _success = $"Registered '{request.NodeId}'.";
                 _form.Reset();
                 await RefreshAsync();
             }
             else
             {
-                _error = error ?? "Registration failed.";
+                _fieldErrors = result.FieldErrors;
+                _error = result.Error ?? "Registration failed.";
             }
         }
         catch (Exception ex)
@@ -228,26 +348,94 @@
         }
     }
 
-    private async Task UploadAsync(Guid sensorId, InputFileChangeEventArgs args)
-    {
-        const long maxBytes = 25 * 1024 * 1024;
-        var file = args.File;
-        _error = null;
+    // ------------------------------------------------------------------- files
 
+    private async Task OpenFilesAsync(SensorSummaryDto sensor)
+    {
+        _selected = sensor;
+        _uploadError = null;
+        _uploadSuccess = null;
+        await LoadFilesAsync();
+    }
+
+    private void CloseFiles()
+    {
+        _selected = null;
+        _files = [];
+    }
+
+    private async Task LoadFilesAsync()
+    {
+        if (_selected is null)
+        {
+            return;
+        }
+
+        _filesLoading = true;
         try
         {
-            await using var stream = file.OpenReadStream(maxBytes);
-            await Api.UploadAttachmentAsync(sensorId, stream, file.Name, file.ContentType);
-            _success = $"Uploaded '{file.Name}'.";
-            await RefreshAsync();
+            _files = await Api.GetAttachmentsAsync(_selected.Id);
+            _filesError = null;
         }
         catch (Exception ex)
         {
-            // Covers both API rejections (e.g. disallowed file type) and a
-            // file over the 25 MB browser-side read limit.
-            _error = $"Upload failed: {SmartXApiClient.DescribeError(ex)}";
+            _filesError = $"Could not load the files: {SmartXApiClient.DescribeError(ex)}";
+        }
+        finally
+        {
+            _filesLoading = false;
         }
     }
+
+    private async Task UploadAsync(InputFileChangeEventArgs args)
+    {
+        if (_selected is null)
+        {
+            return;
+        }
+
+        _uploadError = null;
+        _uploadSuccess = null;
+        var file = args.File;
+
+        // check the file before sending it (same rules as the API)
+        if (AttachmentRules.Check(file.Name, file.Size) is { } problem)
+        {
+            _uploadError = problem;
+            _uploadKey++;
+            return;
+        }
+
+        _uploading = true;
+        try
+        {
+            await using var stream = file.OpenReadStream(AttachmentRules.MaxBytes);
+
+            // some file types (like .cfg) come with no content type from the browser
+            var contentType = string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType;
+            await Api.UploadAttachmentAsync(_selected.Id, stream, file.Name, contentType);
+
+            _uploadSuccess = $"Attached '{file.Name}'.";
+            await LoadFilesAsync();
+            await LoadSensorsAsync(); // updates the file count in the table
+            _selected = _sensors.FirstOrDefault(s => s.Id == _selected.Id) ?? _selected;
+        }
+        catch (Exception ex)
+        {
+            _uploadError = $"Upload failed: {SmartXApiClient.DescribeError(ex)}";
+        }
+        finally
+        {
+            _uploading = false;
+            _uploadKey++;
+        }
+    }
+
+    // ------------------------------------------------------------ form helpers
+
+    private string? ErrorFor(string field) => _fieldErrors.GetValueOrDefault(field);
+
+    private string FieldClass(string field) => _fieldErrors.ContainsKey(field) ? "sx-input invalid" : "sx-input";
 
     private sealed class RegisterSensorForm
     {

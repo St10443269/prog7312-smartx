@@ -25,17 +25,35 @@ public sealed class SmartXApiClient(HttpClient http)
     public async Task<List<SensorSummaryDto>> GetSensorsAsync() =>
         await http.GetFromJsonAsync<List<SensorSummaryDto>>("api/sensors", JsonOptions) ?? [];
 
-    public async Task<(bool Success, string? Error)> RegisterSensorAsync(RegisterSensorRequest request)
+    /// <summary>
+    /// Registers a sensor. If the API refuses it, the result carries a message for
+    /// each wrong field (400) or a single message (409, e.g. MAC already used),
+    /// instead of the raw JSON.
+    /// </summary>
+    public async Task<RegisterResult> RegisterSensorAsync(RegisterSensorRequest request)
     {
         var response = await http.PostAsJsonAsync("api/sensors", request, JsonOptions);
         if (response.IsSuccessStatusCode)
         {
-            return (true, null);
+            return new RegisterResult(true, [], null);
         }
 
         var body = await response.Content.ReadAsStringAsync();
-        return (false, string.IsNullOrWhiteSpace(body) ? response.ReasonPhrase : body);
+        var fieldErrors = ReadFieldErrors(body);
+        if (fieldErrors.Count > 0)
+        {
+            return new RegisterResult(false, fieldErrors, "Please fix the highlighted fields.");
+        }
+
+        return new RegisterResult(false, [], TryReadMessage(body) ?? response.ReasonPhrase ?? "Registration failed.");
     }
+
+    public async Task<List<SensorAttachmentDto>> GetAttachmentsAsync(Guid sensorId) =>
+        await GetAsync<List<SensorAttachmentDto>>($"api/sensors/{sensorId}/attachments") ?? [];
+
+    /// <summary>The address a file can be downloaded from (the browser opens it directly).</summary>
+    public string AttachmentUrl(Guid sensorId, Guid attachmentId) =>
+        new Uri(http.BaseAddress!, $"api/sensors/{sensorId}/attachments/{attachmentId}").ToString();
 
     public async Task UploadAttachmentAsync(Guid sensorId, Stream fileStream, string fileName, string contentType)
     {
@@ -262,6 +280,43 @@ public sealed class SmartXApiClient(HttpClient http)
         var body = await response.Content.ReadAsStringAsync();
         var message = TryReadMessage(body) ?? $"{(int)response.StatusCode} {response.ReasonPhrase}";
         throw new ApiRequestException(message, (int)response.StatusCode);
+    }
+
+    // The API reports field problems as { "errors": { "macAddress": ["..."] } }.
+    // Keep the first message for each field, using the same keys as the validator.
+    private static Dictionary<string, string> ReadFieldErrors(string body)
+    {
+        var errors = new Dictionary<string, string>();
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return errors;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            if (doc.RootElement.ValueKind == JsonValueKind.Object
+                && doc.RootElement.TryGetProperty("errors", out var list)
+                && list.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var field in list.EnumerateObject())
+                {
+                    var first = field.Value.ValueKind == JsonValueKind.Array && field.Value.GetArrayLength() > 0
+                        ? field.Value[0].GetString()
+                        : null;
+                    if (!string.IsNullOrWhiteSpace(first))
+                    {
+                        errors[field.Name] = first;
+                    }
+                }
+            }
+        }
+        catch (JsonException)
+        {
+            // not JSON - there are no field errors to show
+        }
+
+        return errors;
     }
 
     private static string? TryReadMessage(string body)

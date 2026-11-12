@@ -1,0 +1,13 @@
+@* A small red message under a form field. Shows nothing when there is no problem. *@
+@if (!string.IsNullOrWhiteSpace(Text))
+{
+    <span class="field-message">@Text</span>
+}
+
+<style>
+    .field-message { display: block; margin-top: 0.25rem; color: var(--sx-red); font-size: 0.78rem; font-weight: 400; }
+</style>
+
+@code {
+    [Parameter] public string? Text { get; set; }
+}
