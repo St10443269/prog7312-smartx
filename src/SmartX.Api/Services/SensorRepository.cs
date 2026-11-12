@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using SmartX.Api.RealTime;
 using SmartX.Shared.Models;
 
 namespace SmartX.Api.Services;
@@ -13,9 +14,15 @@ public sealed class SensorRepository : ISensorRepository
 {
     private readonly ConcurrentDictionary<Guid, SensorRegistration> _sensors = new();
 
+    // MAC address (in the standard format) -> sensor id. Checking whether a MAC
+    // is already registered is then one lookup, instead of going through every
+    // sensor each time someone registers a device.
+    private readonly ConcurrentDictionary<string, Guid> _idByMac = new();
+
     public SensorRegistration Add(SensorRegistration sensor)
     {
         _sensors[sensor.Id] = sensor;
+        _idByMac[DeviceRegistry.NormaliseMac(sensor.MacAddress)] = sensor.Id;
         return sensor;
     }
 
@@ -26,7 +33,7 @@ public sealed class SensorRepository : ISensorRepository
         _sensors.GetValueOrDefault(id);
 
     public bool MacAddressExists(string macAddress) =>
-        _sensors.Values.Any(s => string.Equals(s.MacAddress, macAddress, StringComparison.OrdinalIgnoreCase));
+        _idByMac.ContainsKey(DeviceRegistry.NormaliseMac(macAddress));
 
     public SensorAttachment? AddAttachment(Guid sensorId, SensorAttachment attachment)
     {
